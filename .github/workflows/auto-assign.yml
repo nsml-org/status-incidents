@@ -1,0 +1,31 @@
+# Assign every newly-opened issue to the operator so triage notifications and
+# the Issues > Assigned-to-you view always reflect the current backlog. This
+# fires on both human-authored entries (incident / maintenance templates) and
+# bot-authored entries (UptimeFlare auto-issues), since both kinds need the
+# same triage attention.
+#
+# Uses the default GITHUB_TOKEN, which has issues:write scope on this repo
+# only -- no additional secrets required.
+
+name: Auto-assign new issues
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: ['ilg'],
+            });

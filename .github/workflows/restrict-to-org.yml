@@ -1,0 +1,137 @@
+# Restrict who can usefully interact with this repo to:
+#
+#   * public members of the nsml-org GitHub organization, and
+#   * GitHub Apps installed on the repo (in particular nsml-status-bot[bot]
+#     opening auto-issues from the UptimeFlare worker).
+#
+# GitHub's built-in "interaction limits" feature only lasts up to 6 months
+# per application and then auto-resets, so this workflow exists to enforce
+# the same policy durably. It runs in two modes:
+#
+#   * On `issues: opened` from a non-member: close + lock the issue, apply
+#     the `out-of-scope` label, and post a templated explanation pointing
+#     readers at the actual nsml.org channels.
+#
+#   * On `issue_comment: created` from a non-member: delete the comment.
+#     Comments can't be locked individually, so deletion is the only way to
+#     keep the thread free of off-topic noise.
+#
+# Membership check uses the unauthenticated public-members endpoint
+# (GET /orgs/{org}/public_members/{user} -> 204 if member, 404 if not), so
+# the default GITHUB_TOKEN's lack of read:org scope doesn't matter. The
+# trade-off is that org members whose membership visibility is set to
+# "private" will be treated as non-members; nsml-org members should keep
+# their membership public.
+
+name: Restrict interactions to nsml-org members
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    # Skip GitHub App actors (their login ends with `[bot]`); they are
+    # explicitly trusted because they can only act if installed on this repo.
+    if: ${{ !endsWith(github.actor, '[bot]') }}
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const org = 'nsml-org';
+            const actor = context.actor;
+
+            // Public-members endpoint returns 204 if member, 404 if not.
+            // Anything else (rate limit, GitHub outage) we treat as
+            // "unknown" and skip enforcement to avoid silently nuking
+            // legitimate activity during transient failures.
+            let isMember = false;
+            try {
+              await github.request('GET /orgs/{org}/public_members/{username}', {
+                org,
+                username: actor,
+              });
+              isMember = true;
+            } catch (err) {
+              if (err.status !== 404) {
+                core.warning(
+                  `Membership check for ${actor} returned ${err.status}; ` +
+                    `skipping enforcement so a transient API blip doesn't ` +
+                    `silently delete legitimate content.`,
+                );
+                return;
+              }
+            }
+            if (isMember) {
+              core.info(`${actor} is a public member of ${org}; allowing.`);
+              return;
+            }
+
+            const eventName = context.eventName;
+            if (eventName === 'issue_comment') {
+              const commentId = context.payload.comment.id;
+              core.notice(
+                `Deleting comment ${commentId} on issue #${context.issue.number} ` +
+                  `from non-member ${actor}.`,
+              );
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: commentId,
+              });
+              return;
+            }
+
+            // issues: opened from non-member.
+            const issueNumber = context.issue.number;
+            const explanation =
+              `Hi @${actor}, thanks for the report.\n\n` +
+              `This repository is the **machine-readable backing store for ` +
+              `[https://status.nsml.org/](https://status.nsml.org/)** and only ` +
+              `accepts entries from members of the \`nsml-org\` organization. ` +
+              `If you're seeing a problem with nsml.org, please reach out via ` +
+              `one of the contact channels listed at https://nsml.org/ instead ` +
+              `-- the response time will be much better.\n\n` +
+              `_This issue is being closed and locked automatically; nothing ` +
+              `personal._`;
+
+            core.notice(
+              `Closing + locking issue #${issueNumber} from non-member ${actor}.`,
+            );
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: explanation,
+            });
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ['out-of-scope'],
+              });
+            } catch (err) {
+              // Label may not exist yet on a brand-new repo; not worth failing.
+              core.warning(`Could not add out-of-scope label: ${err.message}`);
+            }
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'not_planned',
+            });
+            await github.rest.issues.lock({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              lock_reason: 'off-topic',
+            });

@@ -1,0 +1,25 @@
+# The repo-wide interaction-limit (set by interaction-limits.yml) blocks
+# non-collaborators from creating issues at the GitHub layer. This file
+# makes the redirect *visible* to a non-member who reaches the "New issue"
+# page anyway, so they see where to go before they hit the wall. It also
+# disables the "Open a blank issue" affordance so anyone who does end up
+# filing here is at least using one of our structured templates.
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a problem with nsml.org
+    url: https://nsml.org/
+    about: >
+      This repo is the machine-readable backing store for the public
+      status page at https://status.nsml.org/. If you have spotted a
+      problem with nsml.org itself, please use the contact channels listed
+      at https://nsml.org/ -- you will get a much faster response than
+      filing an issue here.
+
+  - name: View the public status page
+    url: https://status.nsml.org/
+    about: >
+      Live component status, current incidents, and scheduled maintenance.
+      The data here is populated from the issues in this repo plus a
+      Cloudflare Workers probe engine.
